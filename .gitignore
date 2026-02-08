@@ -177,3 +177,6 @@ tmp/
 
 # Claude Code
 CLAUDE.md
+PLAN*.md
+.gitignore
+configs/glados_config_remote_asr.yaml

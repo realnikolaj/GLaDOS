@@ -1,8 +1,9 @@
 Glados:
-  llm_model: "llama3.2"
-  completion_url: "http://localhost:11434/api/chat"
+  tool_timeout: 60
+  llm_model: "qwen2.5:3b"
+  completion_url: "http://{$SPEACHES_HOST}/api/chat"
   api_key: null  # Add your API key here if needed!
-  interruptible: true
+  interruptible: false
   audio_io: "sounddevice"
   input_mode: "audio"  # audio, text, or both
   tts_enabled: true

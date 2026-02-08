@@ -111,6 +111,9 @@ class GladosConfig(BaseModel):
     tts_enabled: bool = True
     asr_muted: bool = False
     asr_engine: str
+    asr_url: HttpUrl | None = None
+    asr_model: str | None = None
+    asr_language: str | None = None
     wake_word: str | None
     voice: str
     announcement: str | None
@@ -798,8 +801,17 @@ class Glados:
             Glados: A new Glados instance configured with the provided settings
         """
 
+        asr_kwargs: dict[str, Any] = {}
+        if config.asr_url:
+            asr_kwargs["asr_url"] = str(config.asr_url)
+        if config.asr_model:
+            asr_kwargs["asr_model"] = config.asr_model
+        if config.asr_language:
+            asr_kwargs["asr_language"] = config.asr_language
+
         asr_model = get_audio_transcriber(
             engine_type=config.asr_engine,
+            **asr_kwargs,
         )
 
         tts_model: SpeechSynthesizerProtocol

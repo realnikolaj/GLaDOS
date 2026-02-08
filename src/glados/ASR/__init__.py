@@ -41,6 +41,10 @@ def get_audio_transcriber(
         from .tdt_asr import AudioTranscriber as TDTTranscriber
 
         return TDTTranscriber()
+    elif engine_type.lower() == "remote":
+        from .remote_asr import RemoteTranscriber
+
+        return RemoteTranscriber(**kwargs)
     else:
         raise ValueError(f"Unsupported ASR engine type: {engine_type}")
 
