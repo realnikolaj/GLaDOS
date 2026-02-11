@@ -95,7 +95,70 @@ class SpeechPlayer:
                     self.currently_speaking_event.clear()
                     continue
 
-                if audio_len and audio_msg.text:  # Ensure there's audio and text
+                if audio_msg.audio_stream is not None and audio_msg.text:
+                    # Streaming playback path
+                    self.currently_speaking_event.set()
+                    if self._interaction_state:
+                        self._interaction_state.mark_assistant()
+                    if self._observability_bus:
+                        self._observability_bus.emit(
+                            source="tts",
+                            kind="play",
+                            message=trim_message(audio_msg.text),
+                            meta={"streaming": True},
+                        )
+
+                    logger.success(f"TTS streaming: {audio_msg.text}")
+                    interrupted, percentage_played = self.audio_io.start_speaking_stream(
+                        audio_msg.audio_stream, self.tts_sample_rate
+                    )
+
+                    if interrupted:
+                        clipped_text = self.clip_interrupted_sentence(
+                            audio_msg.text, percentage_played
+                        )
+                        logger.success(
+                            f"TTS stream interrupted at {percentage_played}%: {clipped_text}"
+                        )
+                        if self._observability_bus:
+                            self._observability_bus.emit(
+                                source="tts",
+                                kind="interrupt",
+                                message=trim_message(clipped_text),
+                                level="warning",
+                                meta={"percentage": round(float(percentage_played), 2)},
+                            )
+                        assistant_text_accumulator.append(clipped_text)
+                        self._conversation_store.append_multiple([
+                            {
+                                "role": "assistant",
+                                "content": " ".join(assistant_text_accumulator),
+                            },
+                            {
+                                "role": "user",
+                                "content": (
+                                    "[SYSTEM: User interrupted mid-response! Full intended output: "
+                                    f"'{audio_msg.text}']"
+                                ),
+                            },
+                        ])
+                        assistant_text_accumulator = []
+                        self._clear_audio_queue()
+                    else:
+                        logger.success(
+                            f"AudioPlayer: Stream playback completed for: '{audio_msg.text}'"
+                        )
+                        assistant_text_accumulator.append(audio_msg.text)
+                        if self._observability_bus:
+                            self._observability_bus.emit(
+                                source="tts",
+                                kind="finish",
+                                message=trim_message(audio_msg.text),
+                            )
+
+                    self.currently_speaking_event.clear()
+
+                elif audio_len and audio_msg.text:  # Non-streaming playback path
                     self.currently_speaking_event.set()  # We are about to speak
                     if self._interaction_state:
                         self._interaction_state.mark_assistant()
@@ -151,9 +214,9 @@ class SpeechPlayer:
                                 kind="finish",
                                 message=trim_message(audio_msg.text),
                             )
-                        
+
                     self.currently_speaking_event.clear()
-    
+
                 else:
                     logger.warning(f"AudioPlayer: Received empty audio message or no text: {audio_len, audio_msg}")
 

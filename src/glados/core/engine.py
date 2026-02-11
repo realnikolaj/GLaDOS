@@ -117,6 +117,7 @@ class GladosConfig(BaseModel):
     tts_engine: str = "glados"
     tts_url: HttpUrl | None = None
     tts_model: str | None = None
+    tts_stream: bool = True
     wake_word: str | None
     voice: str
     announcement: str | None
@@ -822,6 +823,8 @@ class Glados:
             tts_kwargs["tts_url"] = str(config.tts_url)
         if config.tts_model:
             tts_kwargs["tts_model"] = config.tts_model
+        if config.tts_engine == "remote":
+            tts_kwargs["stream"] = config.tts_stream
 
         tts_model: SpeechSynthesizerProtocol
         tts_model = get_speech_synthesizer(

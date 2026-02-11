@@ -39,6 +39,12 @@ class TextToSpeechSynthesizer:
         self._tts_muted_event = tts_muted_event
         self._observability_bus = observability_bus
 
+    def _is_streaming_capable(self) -> bool:
+        """Check if the TTS model supports streaming audio generation."""
+        return getattr(self.tts_model, "stream", False) and hasattr(
+            self.tts_model, "generate_speech_audio_stream"
+        )
+
     def run(self) -> None:
         """
         Starts the main loop for the TTS Synthesizer thread.
@@ -72,33 +78,58 @@ class TextToSpeechSynthesizer:
                             message=trim_message(text_to_speak),
                         )
 
-                    start_time = time.time()
                     spoken_text_variant = self.stc.text_to_spoken(text_to_speak)
                     if self._tts_muted_event and self._tts_muted_event.is_set():
                         audio_data = np.array([], dtype=np.float32)
-                    else:
-                        audio_data = self.tts_model.generate_speech_audio(spoken_text_variant)
-                    processing_time = time.time() - start_time
-
-                    audio_duration = len(audio_data) / self.tts_model.sample_rate if audio_data.size else 0.0
-                    logger.info(
-                        f"TTS Synthesizer: TTS Complete. Inference: {processing_time:.2f}s, "
-                        f"Audio length: {audio_duration:.2f}s for text: '{spoken_text_variant}'"
-                    )
-                    if self._observability_bus:
-                        self._observability_bus.emit(
-                            source="tts",
-                            kind="ready",
-                            message=trim_message(spoken_text_variant),
-                            meta={
-                                "inference_s": round(processing_time, 3),
-                                "audio_s": round(audio_duration, 3),
-                                "muted": bool(self._tts_muted_event and self._tts_muted_event.is_set()),
-                            },
+                        self.audio_output_queue.put(
+                            AudioMessage(audio=audio_data, text=spoken_text_variant, is_eos=False)
                         )
+                    elif self._is_streaming_capable():
+                        logger.info(f"TTS Synthesizer: Streaming audio for: '{spoken_text_variant}'")
+                        if self._observability_bus:
+                            self._observability_bus.emit(
+                                source="tts",
+                                kind="ready",
+                                message=trim_message(spoken_text_variant),
+                                meta={"streaming": True},
+                            )
+                        audio_stream = self.tts_model.generate_speech_audio_stream(spoken_text_variant)
+                        self.audio_output_queue.put(
+                            AudioMessage(
+                                audio=np.array([], dtype=np.float32),
+                                text=spoken_text_variant,
+                                is_eos=False,
+                                audio_stream=audio_stream,
+                            )
+                        )
+                    else:
+                        start_time = time.time()
+                        audio_data = self.tts_model.generate_speech_audio(spoken_text_variant)
+                        processing_time = time.time() - start_time
 
-                    # Even if audio_data is empty, send the message so AudioPlayer can log/handle it
-                    self.audio_output_queue.put(AudioMessage(audio=audio_data, text=spoken_text_variant, is_eos=False))
+                        audio_duration = (
+                            len(audio_data) / self.tts_model.sample_rate if audio_data.size else 0.0
+                        )
+                        logger.info(
+                            f"TTS Synthesizer: TTS Complete. Inference: {processing_time:.2f}s, "
+                            f"Audio length: {audio_duration:.2f}s for text: '{spoken_text_variant}'"
+                        )
+                        if self._observability_bus:
+                            self._observability_bus.emit(
+                                source="tts",
+                                kind="ready",
+                                message=trim_message(spoken_text_variant),
+                                meta={
+                                    "inference_s": round(processing_time, 3),
+                                    "audio_s": round(audio_duration, 3),
+                                    "muted": bool(
+                                        self._tts_muted_event and self._tts_muted_event.is_set()
+                                    ),
+                                },
+                            )
+                        self.audio_output_queue.put(
+                            AudioMessage(audio=audio_data, text=spoken_text_variant, is_eos=False)
+                        )
             except queue.Empty:
                 pass  # Normal, no text to process
             except Exception as e:

@@ -4,7 +4,8 @@ This module defines message classes used for audio processing and communication
 between different components of the voice assistant pipeline.
 """
 
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
@@ -18,11 +19,13 @@ class AudioMessage:
         audio: Generated audio samples as float32 array
         text: Associated text that was synthesized
         is_eos: Flag indicating end of speech stream
+        audio_stream: Optional streaming generator for chunked playback
     """
 
     audio: NDArray[np.float32]
     text: str
     is_eos: bool = False
+    audio_stream: Iterator[NDArray[np.float32]] | None = field(default=None, repr=False)
 
 
 @dataclass

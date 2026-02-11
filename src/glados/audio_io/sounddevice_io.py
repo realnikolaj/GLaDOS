@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 import queue
 import threading
 from typing import Any
@@ -203,6 +204,97 @@ class SoundDeviceAudioIO:
 
         percentage_played = min(int(progress / total_samples * 100), 100)
         return interrupted, percentage_played
+
+    def start_speaking_stream(
+        self, audio_generator: Iterator[NDArray[np.float32]], sample_rate: int
+    ) -> tuple[bool, int]:
+        """Play audio chunks as they arrive from a streaming generator.
+
+        Uses a feeder thread to push chunks into a queue, and an sd.OutputStream
+        callback to pull them for playback. Returns interruption status and
+        estimated percentage played, matching measure_percentage_spoken semantics.
+
+        Parameters:
+            audio_generator: Iterator yielding float32 audio chunks.
+            sample_rate: Sample rate of the audio in Hz.
+
+        Returns:
+            tuple[bool, int]: (interrupted, percentage_played)
+        """
+        self.stop_speaking()
+        self._stop_event.clear()
+        self._is_playing = True
+
+        chunk_queue: queue.Queue[NDArray[np.float32] | None] = queue.Queue(maxsize=10)
+        completion_event = threading.Event()
+        total_samples = 0
+        played_samples = 0
+        interrupted = False
+
+        def callback(
+            outdata: NDArray[np.float32], frames: int, time_info: dict[str, float], status: sd.CallbackFlags
+        ) -> None:
+            nonlocal played_samples, interrupted
+            if status:
+                logger.debug(f"Stream callback status: {status}")
+
+            if not self._is_playing:
+                interrupted = True
+                outdata.fill(0)
+                raise sd.CallbackStop
+
+            try:
+                chunk = chunk_queue.get_nowait()
+            except queue.Empty:
+                outdata.fill(0)
+                return
+
+            if chunk is None:
+                outdata.fill(0)
+                raise sd.CallbackStop
+
+            if len(chunk) >= frames:
+                outdata[:, 0] = chunk[:frames]
+                played_samples += frames
+            else:
+                outdata[: len(chunk), 0] = chunk
+                outdata[len(chunk) :] = 0
+                played_samples += len(chunk)
+
+        def feed_queue() -> None:
+            nonlocal total_samples
+            try:
+                for chunk in audio_generator:
+                    if not self._is_playing:
+                        break
+                    total_samples += len(chunk)
+                    chunk_queue.put(chunk)
+            except Exception as e:
+                logger.error(f"Stream feeder error: {e}")
+            finally:
+                chunk_queue.put(None)
+
+        feeder = threading.Thread(target=feed_queue, daemon=True)
+        feeder.start()
+
+        try:
+            stream = sd.OutputStream(
+                samplerate=sample_rate,
+                channels=1,
+                callback=callback,
+                blocksize=1024,
+                finished_callback=completion_event.set,
+            )
+            logger.debug(f"Streaming playback started at {sample_rate} Hz")
+            with stream:
+                feeder.join()
+                completion_event.wait(timeout=30.0)
+        except (sd.PortAudioError, RuntimeError) as e:
+            logger.debug(f"Stream playback error: {e}")
+
+        self._is_playing = False
+        percentage = min(int(played_samples / total_samples * 100), 100) if total_samples > 0 else 100
+        return interrupted, percentage
 
     def check_if_speaking(self) -> bool:
         """Check if audio is currently being played.
