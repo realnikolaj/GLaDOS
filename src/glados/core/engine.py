@@ -114,6 +114,9 @@ class GladosConfig(BaseModel):
     asr_url: HttpUrl | None = None
     asr_model: str | None = None
     asr_language: str | None = None
+    tts_engine: str = "glados"
+    tts_url: HttpUrl | None = None
+    tts_model: str | None = None
     wake_word: str | None
     voice: str
     announcement: str | None
@@ -814,8 +817,17 @@ class Glados:
             **asr_kwargs,
         )
 
+        tts_kwargs: dict[str, Any] = {}
+        if config.tts_url:
+            tts_kwargs["tts_url"] = str(config.tts_url)
+        if config.tts_model:
+            tts_kwargs["tts_model"] = config.tts_model
+
         tts_model: SpeechSynthesizerProtocol
-        tts_model = get_speech_synthesizer(config.voice)
+        tts_model = get_speech_synthesizer(
+            engine_type=config.tts_engine if config.tts_engine != "glados" else config.voice,
+            **tts_kwargs,
+        )
 
         audio_io = get_audio_system(backend_type=config.audio_io)
 
