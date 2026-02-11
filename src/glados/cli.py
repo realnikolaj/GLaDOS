@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 from hashlib import sha256
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -174,6 +175,14 @@ def models_valid() -> bool:
         if not (file_path.exists() and sha256(file_path.read_bytes()).hexdigest() == model_info["checksum"]):
             return False
     return True
+
+
+def _needs_local_models() -> bool:
+    """Return False if both TTS and ASR are set to remote via env vars."""
+    return not (
+        os.environ.get("GLADOS_TTS_ENGINE") == "remote"
+        and os.environ.get("GLADOS_ASR_ENGINE") == "remote"
+    )
 
 
 def say(text: str, config_path: str | Path = "glados_config.yaml") -> None:
@@ -426,7 +435,7 @@ def main() -> int:
     if args.command == "download":
         return asyncio.run(download_models())
     else:
-        if not models_valid():
+        if _needs_local_models() and not models_valid():
             print("Some model files are invalid or missing. Please run 'uv run glados download'")
             return 1
         if args.command == "say":
