@@ -231,35 +231,40 @@ class SoundDeviceAudioIO:
         played_samples = 0
         interrupted = False
 
-        def callback(
-            outdata: NDArray[np.float32], frames: int, time_info: dict[str, float], status: sd.CallbackFlags
-        ) -> None:
-            nonlocal played_samples, interrupted
-            if status:
-                logger.debug(f"Stream callback status: {status}")
-
-            if not self._is_playing:
-                interrupted = True
-                outdata.fill(0)
-                raise sd.CallbackStop
-
-            try:
-                chunk = chunk_queue.get_nowait()
-            except queue.Empty:
-                outdata.fill(0)
-                return
-
-            if chunk is None:
-                outdata.fill(0)
-                raise sd.CallbackStop
-
-            if len(chunk) >= frames:
-                outdata[:, 0] = chunk[:frames]
+        # Buffer to hold leftover samples between callbacks
+        buffer = np.array([], dtype=np.float32)
+        
+        def callback(outdata, frames, time_info, status):
+            nonlocal buffer, played_samples, interrupted
+            
+            # Fill buffer from queue until we have enough
+            while len(buffer) < frames:
+                try:
+                    chunk = chunk_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if chunk is None:
+                    # End of stream - play remaining buffer
+                    if len(buffer) > 0:
+                        outdata[:len(buffer), 0] = buffer
+                        outdata[len(buffer):] = 0
+                        played_samples += len(buffer)
+                        buffer = np.array([], dtype=np.float32)
+                    else:
+                        outdata.fill(0)
+                    raise sd.CallbackStop
+                buffer = np.concatenate([buffer, chunk])
+            
+            # Output frames from buffer
+            if len(buffer) >= frames:
+                outdata[:, 0] = buffer[:frames]
+                buffer = buffer[frames:]
                 played_samples += frames
             else:
-                outdata[: len(chunk), 0] = chunk
-                outdata[len(chunk) :] = 0
-                played_samples += len(chunk)
+                outdata[:len(buffer), 0] = buffer
+                outdata[len(buffer):] = 0
+                played_samples += len(buffer)
+                buffer = np.array([], dtype=np.float32)
 
         def feed_queue() -> None:
             nonlocal total_samples
