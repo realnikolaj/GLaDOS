@@ -21,6 +21,7 @@ from ..ASR import TranscriberProtocol, get_audio_transcriber
 from ..audio_io import AudioProtocol, get_audio_system
 from ..TTS import SpeechSynthesizerProtocol, get_speech_synthesizer
 from ..utils import spoken_text_converter as stc
+from ..utils.env import _get_env_bool, _get_env_override, _get_sample_rate
 from ..utils.resources import resource_path
 from ..autonomy import AutonomyConfig, AutonomyLoop, ConstitutionalState, EventBus, InteractionState, SubagentConfig, SubagentManager, TaskManager, TaskSlotStore
 from ..autonomy.agents import CompactionAgent, EmotionAgent, HackerNewsSubagent, ObserverAgent, WeatherSubagent
@@ -209,6 +210,7 @@ class Glados:
         tts_enabled: bool = True,
         asr_muted: bool = False,
         llm_headers: dict[str, str] | None = None,
+        tts_sample_rate: int | None = None,
     ) -> None:
         """
         Initialize the Glados voice assistant with configuration parameters.
@@ -237,9 +239,11 @@ class Glados:
             tts_enabled (bool): Whether TTS audio output is enabled at startup.
             asr_muted (bool): Whether ASR starts muted.
             llm_headers (dict[str, str] | None): Extra headers for LLM requests.
+            tts_sample_rate (int | None): Override sample rate for TTS playback.
         """
         self._asr_model = asr_model
         self._tts = tts_model
+        self._tts_sample_rate = tts_sample_rate
         self.input_mode = input_mode
         self.completion_url = completion_url
         self.llm_model = llm_model
@@ -488,7 +492,7 @@ class Glados:
             audio_io=self.audio_io,
             audio_output_queue=self.audio_queue,
             conversation_store=self._conversation_store,
-            tts_sample_rate=self._tts.sample_rate,
+            tts_sample_rate=self._tts_sample_rate or self._tts.sample_rate,
             shutdown_event=self.shutdown_event,
             currently_speaking_event=self.currently_speaking_event,
             processing_active_event=self.processing_active_event,
@@ -805,32 +809,45 @@ class Glados:
             Glados: A new Glados instance configured with the provided settings
         """
 
+        # ASR config with env overrides (env > config)
+        asr_engine = _get_env_override("GLADOS_ASR_ENGINE", config.asr_engine)
+        asr_url = _get_env_override("GLADOS_ASR_URL", str(config.asr_url) if config.asr_url else None)
+        asr_model_name = _get_env_override("GLADOS_ASR_MODEL", config.asr_model)
+
         asr_kwargs: dict[str, Any] = {}
-        if config.asr_url:
-            asr_kwargs["asr_url"] = str(config.asr_url)
-        if config.asr_model:
-            asr_kwargs["asr_model"] = config.asr_model
+        if asr_url:
+            asr_kwargs["asr_url"] = asr_url
+        if asr_model_name:
+            asr_kwargs["asr_model"] = asr_model_name
         if config.asr_language:
             asr_kwargs["asr_language"] = config.asr_language
 
         asr_model = get_audio_transcriber(
-            engine_type=config.asr_engine,
+            engine_type=asr_engine,
             **asr_kwargs,
         )
 
+        # TTS config with env overrides (env > config)
+        tts_engine = _get_env_override("GLADOS_TTS_ENGINE", config.tts_engine)
+        tts_url = _get_env_override("GLADOS_TTS_URL", str(config.tts_url) if config.tts_url else None)
+        tts_model_name = _get_env_override("GLADOS_TTS_MODEL", config.tts_model)
+        tts_stream = _get_env_bool("GLADOS_TTS_STREAM", config.tts_stream)
+
         tts_kwargs: dict[str, Any] = {}
-        if config.tts_url:
-            tts_kwargs["tts_url"] = str(config.tts_url)
-        if config.tts_model:
-            tts_kwargs["tts_model"] = config.tts_model
-        if config.tts_engine == "remote":
-            tts_kwargs["stream"] = config.tts_stream
+        if tts_url:
+            tts_kwargs["tts_url"] = tts_url
+        if tts_model_name:
+            tts_kwargs["tts_model"] = tts_model_name
+        if tts_engine == "remote":
+            tts_kwargs["stream"] = tts_stream
 
         tts_model: SpeechSynthesizerProtocol
         tts_model = get_speech_synthesizer(
-            engine_type=config.tts_engine if config.tts_engine != "glados" else config.voice,
+            engine_type=tts_engine if tts_engine != "glados" else config.voice,
             **tts_kwargs,
         )
+        # Detect correct sample rate from model name (important for streaming PCM)
+        tts_sample_rate = _get_sample_rate(tts_model_name, tts_model)
 
         audio_io = get_audio_system(backend_type=config.audio_io)
 
@@ -854,6 +871,7 @@ class Glados:
             tts_enabled=config.tts_enabled,
             asr_muted=config.asr_muted,
             llm_headers=config.llm_headers,
+            tts_sample_rate=tts_sample_rate,
         )
 
     @classmethod
