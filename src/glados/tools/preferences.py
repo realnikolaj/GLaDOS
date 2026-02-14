@@ -37,6 +37,7 @@ set_preference_definition = {
                 },
                 "value": {
                     "description": "Preference value (string, number, boolean, or array)",
+                    "type": "string",
                 },
             },
             "required": ["key", "value"],

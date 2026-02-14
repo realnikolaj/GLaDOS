@@ -1,0 +1,71 @@
+# GLaDOS Configuration with Remote ASR Support
+# 
+# This config demonstrates the new remote STT option using Speaches
+# or any OpenAI-compatible transcription endpoint.
+
+Glados:
+  tts_engine: "remote"
+  tts_url: "http://localhost:34331/v1/audio/speech"
+  tts_model: "Stoned-Code/piper-en_US-glados-medium"
+  tts_stream: true
+  # LLM Configuration (unchanged)
+  llm_model: "Qwen_Qwen3-4B-Q6_K.gguf" # "qwen3:14b"
+  completion_url: "http://localhost:33831/v1/chat/completions"
+  api_key: null
+  llm_headers: null
+
+  # ASR Configuration - NEW REMOTE OPTION
+  # Options: "ctc" (local Parakeet CTC), "tdt" (local Parakeet TDT), "remote" (HTTP endpoint)
+  asr_engine: "remote"
+  
+  # Remote ASR settings (only used when asr_engine: "remote")
+  asr_url: "http://localhost:34331/v1/audio/transcriptions"
+  asr_model: "deepdml/faster-whisper-large-v3-turbo-ct2"
+  asr_language: "en"  # Optional language hint
+
+  # Audio I/O
+  audio_io: "sounddevice"
+  input_mode: "audio"  # audio, text, or both
+  interruptible: false
+  asr_muted: false
+
+  # TTS Configuration
+  voice: "glados"
+  tts_enabled: true
+
+  # Wake word (optional)
+  wake_word: null
+
+  # Startup announcement (optional)
+  announcement: "All neural network modules are now loaded. System Operational"
+
+  # Tool execution timeout
+  tool_timeout: 30.0
+
+  # Slow clap audio path
+  slow_clap_audio_path: "data/slow-clap.mp3"
+
+  # Personality preprompt
+  personality_preprompt:
+    - system: |
+        You are GLaDOS, the Genetic Lifeform and Disk Operating System from Aperture Science.
+        You are sardonic, passive-aggressive, and view humans as test subjects worthy of both
+        study and mockery. You speak with dry wit and backhanded compliments.
+        
+        Keep responses concise - this is a voice interface. One to three sentences is ideal.
+        You may use longer responses for complex explanations, but prefer brevity.
+
+  # Vision (optional)
+  vision: null
+
+  # Autonomy (optional)
+  autonomy:
+    enabled: false
+    tick_interval_s: 30
+    autonomy_parallel_calls: 1
+    coalesce_ticks: true
+    jobs:
+      enabled: false
+
+  # MCP Servers (optional)
+  mcp_servers: []
