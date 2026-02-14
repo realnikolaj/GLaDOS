@@ -1,17 +1,22 @@
 import argparse
 import asyncio
 from hashlib import sha256
+import os
 from pathlib import Path
 import sys
+from typing import Any
 
 import httpx
+from loguru import logger
 from rich import print as rprint
 from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn
 import sounddevice as sd  # type: ignore
 
+from .audio_io.sounddevice_io import SoundDeviceAudioIO
 from .core.engine import Glados, GladosConfig
-from .TTS import tts_glados
+from .TTS import get_speech_synthesizer
 from .utils import spoken_text_converter as stc
+from .utils.env import _get_env_bool, _get_env_override, _get_sample_rate
 from .utils.resources import resource_path
 
 # Type aliases for clarity
@@ -172,33 +177,59 @@ def models_valid() -> bool:
     return True
 
 
+def _needs_local_models() -> bool:
+    """Return False if both TTS and ASR are set to remote via env vars."""
+    return not (
+        os.environ.get("GLADOS_TTS_ENGINE") == "remote"
+        and os.environ.get("GLADOS_ASR_ENGINE") == "remote"
+    )
+
+
 def say(text: str, config_path: str | Path = "glados_config.yaml") -> None:
     """
-    Converts text to speech using the GLaDOS text-to-speech system and plays the generated audio.
+    Converts text to speech and plays the generated audio, respecting config for TTS backend.
 
     Parameters:
         text (str): The text to be spoken by the GLaDOS voice assistant.
         config_path (str | Path, optional): Path to the configuration YAML file.
             Defaults to "glados_config.yaml".
-
-    Notes:
-        - Uses a text-to-speech synthesizer to generate audio
-        - Converts input text to a spoken format before synthesis
-        - Plays the generated audio using the system's default sound device
-        - Blocks execution until audio playback is complete
-
-    Example:
-        say("Hello, world!")  # Speaks the text using GLaDOS voice
     """
-    glados_tts = tts_glados.SpeechSynthesizer()
+    config = GladosConfig.from_yaml(str(config_path))
+
+    # Env vars override config (env > config)
+    tts_engine = _get_env_override("GLADOS_TTS_ENGINE", config.tts_engine)
+    tts_url = _get_env_override("GLADOS_TTS_URL", str(config.tts_url) if config.tts_url else None)
+    tts_model_name = _get_env_override("GLADOS_TTS_MODEL", config.tts_model)
+    tts_stream = _get_env_bool("GLADOS_TTS_STREAM", config.tts_stream)
+
+    # Build kwargs for factory
+    tts_kwargs: dict[str, Any] = {}
+    if tts_url:
+        tts_kwargs["tts_url"] = tts_url
+    if tts_model_name:
+        tts_kwargs["tts_model"] = tts_model_name
+    if tts_engine == "remote":
+        tts_kwargs["stream"] = tts_stream
+
+    engine_type = tts_engine if tts_engine != "glados" else config.voice
+    tts = get_speech_synthesizer(engine_type=engine_type, **tts_kwargs)
+    sample_rate = _get_sample_rate(tts_model_name, tts)
+
     converter = stc.SpokenTextConverter()
     converted_text = converter.text_to_spoken(text)
-    # Generate the audio to from the text
-    audio = glados_tts.generate_speech_audio(converted_text)
 
-    # Play the audio
-    sd.play(audio, glados_tts.sample_rate)
-    sd.wait()
+    # Streaming path
+    is_streaming = getattr(tts, "stream", False) and hasattr(tts, "generate_speech_audio_stream")
+    if is_streaming:
+        logger.info(f"Streaming TTS via {tts_engine} at {sample_rate} Hz")
+        audio_stream = tts.generate_speech_audio_stream(converted_text)
+        audio_io = SoundDeviceAudioIO()
+        audio_io.start_speaking_stream(audio_stream, sample_rate)
+    else:
+        # Non-streaming fallback
+        audio = tts.generate_speech_audio(converted_text)
+        sd.play(audio, sample_rate)
+        sd.wait()
 
 
 def start(
@@ -404,7 +435,7 @@ def main() -> int:
     if args.command == "download":
         return asyncio.run(download_models())
     else:
-        if not models_valid():
+        if _needs_local_models() and not models_valid():
             print("Some model files are invalid or missing. Please run 'uv run glados download'")
             return 1
         if args.command == "say":
