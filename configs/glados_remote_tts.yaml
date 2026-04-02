@@ -9,7 +9,7 @@ Glados:
   tts_model: "Stoned-Code/piper-en_US-glados-medium"
   tts_stream: true
   # LLM Configuration (unchanged)
-  llm_model: "Qwen_Qwen3-4B-Q6_K.gguf" # "qwen3:14b"
+  llm_model: "qwen3:8b"
   completion_url: "http://localhost:33831/v1/chat/completions"
   api_key: null
   llm_headers: null
